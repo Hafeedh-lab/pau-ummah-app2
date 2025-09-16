@@ -1,37 +1,46 @@
 import { NextRequest, NextResponse } from "next/server";
 import { googleDriveService } from "@/lib/google-drive";
-import { FEATURED_MEDIA } from "@/lib/constants";
 
-export const dynamic = "force-dynamic";
-
-export async function GET(request: NextRequest) {
-  const { searchParams } = new URL(request.url);
-  const limit = Number(searchParams.get("limit") ?? "20");
-  const pageToken = searchParams.get("pageToken") ?? undefined;
-
-  const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
-
+export async function GET(
+  _request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
   try {
+    // Await the params since it's a Promise in Next.js 15+
+    const { id } = await params;
+    
+    const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
     if (!folderId) {
       return NextResponse.json(
-        { items: FEATURED_MEDIA, nextPageToken: null },
-        { headers: { "Cache-Control": "public, s-maxage=60" } },
+        { error: "Google Drive folder not configured" },
+        { status: 500 }
       );
     }
 
     await googleDriveService.authenticate();
-    const response = await googleDriveService.listMediaFiles({ folderId, pageSize: limit, pageToken });
+    const [metadata, streamUrl, thumbnail] = await Promise.all([
+      googleDriveService.getFileMetadata(id),
+      googleDriveService.generateStreamUrl(id),
+      googleDriveService.generateThumbnail(id),
+    ]);
 
-    return NextResponse.json(response, {
-      headers: {
-        "Cache-Control": "public, s-maxage=60",
-      },
+    if (!metadata) {
+      return NextResponse.json(
+        { error: "File not found" },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json({
+      ...metadata,
+      streamUrl,
+      thumbnail,
     });
   } catch (error) {
-    console.error("Failed to fetch media", error);
+    console.error("Failed to fetch media metadata:", error);
     return NextResponse.json(
-      { items: FEATURED_MEDIA, nextPageToken: null, error: "Unable to fetch media at this time" },
-      { status: 500 },
+      { error: "Unable to fetch media metadata" },
+      { status: 500 }
     );
   }
 }
